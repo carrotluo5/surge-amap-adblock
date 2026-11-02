@@ -43,25 +43,43 @@ const EMPTY_OUT = [
   const url = $request.url;
   const raw = $response.body;
 
+  // 任何分支抛错都原样放行：绝不能因为脚本异常把响应弄坏或让广告漏过判定
+  try {
+
   // ---- AI 推荐流（SSE，非 JSON）：首页按行手术 ----
   if (url.indexOf("ai.amap.com") !== -1 && url.indexOf("/ai_rec/") !== -1) {
     if (!raw) {
       return $done({});
     }
-    // 探索页 AI 流：整条置空
+    // 探索页 AI 流：只留原流里的终止帧，内容帧全丢。
+    // 注意：终止帧必须是服务端原样的那一帧，自己拼一个假的会让 App 判为加载失败。
     if (url.indexOf("/ai_rec/home_explore") !== -1) {
-      return $done({ body: 'event: data\ndata: {"exist_risk":false,"is_done":true}\n\n' });
+      const keep = raw
+        .split("\n")
+        .filter((l) => l.indexOf("\"is_done\"") !== -1 || l.indexOf("exist_risk") !== -1);
+      return $done({ body: keep.join("\n") + "\n" });
     }
-    // 首页 AI 流：从「帮我叫一辆空气清新的车」那一行起（含它本身）往下全部丢掉
+    // 首页 AI 流：从「帮我叫一辆空气清新的车」那一帧起，内容全部清掉。
+    //
+    // 这里以前是「截断流 + 自己补一个终止帧」，结果首页会显示「网络不畅，请稍后重试」：
+    // App 拿不到服务端原来那一帧 is_done，就把这半截 SSE 判成加载失败并弹重试。
+    // 现在改成：内容帧照删，但服务端自己的终止帧原样保留，流结构是完整的。
     const lines = raw.split("\n");
     const out = [];
+    const pending = []; // 暂存 event:/id:/空行，跟着下一条 data 行一起决定去留
     let cut = false;
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
       if (line.indexOf("data:") !== 0) {
-        if (!cut) {
-          out.push(line);
-        }
+        pending.push(line);
+        continue;
+      }
+      const isTerminal = line.indexOf('"is_done"') !== -1 || line.indexOf("exist_risk") !== -1;
+      if (isTerminal) {
+        // 终止帧：连同它前面的 event:/空行一起原样保留
+        for (const p of pending) out.push(p);
+        pending.length = 0;
+        out.push(line);
         continue;
       }
       let j;
@@ -69,7 +87,11 @@ const EMPTY_OUT = [
         j = JSON.parse(line.slice(5));
       } catch (e) {
         if (!cut) {
+          for (const p of pending) out.push(p);
+          pending.length = 0;
           out.push(line);
+        } else {
+          pending.length = 0;
         }
         continue;
       }
@@ -77,6 +99,7 @@ const EMPTY_OUT = [
       const inner = comp.data && comp.data.data;
       // AI 思考过程行：整行丢弃
       if (comp.type === "loading" || comp.think_type || (inner && inner.sub_type === "think")) {
+        pending.length = 0;
         continue;
       }
       const isTaxi =
@@ -85,10 +108,11 @@ const EMPTY_OUT = [
         line.indexOf('"PmtContainer"') !== -1;
       if (isTaxi) {
         cut = true;
-        // 叫车卡与「常去地点」可能挤在同一行：做模块级清理，只留常去地点那一个模块
+      }
+      if (cut) {
         const mods = inner && inner.modules;
-        if (mods) {
-          let keepFrequent = false;
+        if (mods && isTaxi) {
+          // 叫车卡与「常去地点」可能挤在同一帧：只留含常去地点的模块
           for (const k of Object.keys(mods)) {
             let t = "";
             try {
@@ -96,26 +120,24 @@ const EMPTY_OUT = [
             } catch (e) {
               t = "";
             }
-            if (t.indexOf("常去地点") !== -1) {
-              keepFrequent = true;
-            } else {
+            if (t.indexOf("常去地点") === -1) {
               delete mods[k];
             }
           }
-          if (keepFrequent) {
-            out.push("data:" + JSON.stringify(j));
-          }
+          for (const p of pending) out.push(p);
+          pending.length = 0;
+          // 沿用原行的前缀（"data: " 带空格或 "data:" 不带），不自己重排
+          out.push(line.slice(0, 5) + " " + JSON.stringify(j));
+        } else {
+          pending.length = 0; // 叫车卡本身及它下面的内容帧全部丢弃
         }
-        continue; // 叫车卡本身及它下面的全部丢弃
-      }
-      if (cut) {
         continue;
       }
+      for (const p of pending) out.push(p);
+      pending.length = 0;
       out.push(line);
     }
-    if (cut) {
-      out.push('data: {"exist_risk":false,"is_done":true}', "");
-    }
+    for (const p of pending) out.push(p);
     return $done({ body: out.join("\n") });
   }
 
@@ -288,9 +310,30 @@ const EMPTY_OUT = [
     }
   } else if (url.includes("/info_bff/contentFeed") || url.includes("/info_bff/ContentCenter")) {
     // 首页/内容中心推荐瀑布流（赏红叶榜、KTV热门榜、酒吧热门榜、游记攻略等）
-    const wf = obj?.data?.modules?.waterfall;
-    if (wf?.data && Array.isArray(wf.data.list)) {
-      wf.data.list = [];
+    //
+    // 注意：这里以前是把 modules.waterfall.data.list 置空数组，结果高德在首页
+    // 「探索本地」下方那格瀑布流里显示「网络不畅，请稍后重试」——因为它把「有模块但
+    // 数据为空」当成加载失败。所以改成把整个模块删掉，App 就认为压根没有这个区域。
+    const nuke = (host, keys) => {
+      if (!host || typeof host !== "object") return;
+      for (const k of keys) {
+        if (Object.prototype.hasOwnProperty.call(host, k)) {
+          delete host[k];
+        }
+      }
+    };
+    nuke(obj?.data?.modules, ["waterfall", "feed", "contentFeed", "waterfallList"]);
+    nuke(obj?.data, ["waterfall", "feed", "contentFeed", "waterfallList"]);
+    // 兜底：任何「有容器但 list 为空」的模块都删掉，否则 App 会把空列表
+    // 当成加载失败，渲染成「网络不畅，请稍后重试」占位。
+    const mods = obj?.data?.modules;
+    if (mods && typeof mods === "object") {
+      for (const k of Object.keys(mods)) {
+        const d = mods[k] && mods[k].data;
+        if (d && Array.isArray(d.list) && d.list.length === 0) {
+          delete mods[k];
+        }
+      }
     }
   } else if (url.includes("/perception/drive/routeInfo")) {
     // 导航详情页
@@ -831,15 +874,35 @@ const EMPTY_OUT = [
       }
     }
   } else if (url.includes("/valueadded/alimama/splash_screen")) {
-    // 开屏广告
-    if (obj?.data?.ad?.length > 0) {
-      for (let item of obj.data.ad) {
-        item.set.setting.display_time = 0;
-        item.creative[0].start_time = 3818332800; // Unix 时间戳 2090-12-31 00:00:00
-        item.creative[0].end_time = 3818419199; // Unix 时间戳 2090-12-31 23:59:59
+    // 开屏广告：直接把广告数组清空。
+    // 原来照抄 Loon 的「把 creative[0].start_time 改成 2090 年」，但只要某次下发的
+    // 广告结构里没有 creative[0] 就会抛 TypeError，整个脚本作废、原响应直通 → 广告照播。
+    // 这就是「十来次里偶发一次开屏广告」的根因。
+    if (obj?.data) {
+      const kill = (item) => {
+        try {
+          if (item && item.set && item.set.setting) {
+            item.set.setting.display_time = 0;
+          }
+          if (item && Array.isArray(item.creative) && item.creative[0]) {
+            item.creative[0].start_time = 3818332800;
+            item.creative[0].end_time = 3818419199;
+          }
+        } catch (e) {}
+      };
+      if (Array.isArray(obj.data.ad)) {
+        obj.data.ad.forEach(kill);
+        obj.data.ad = [];
+      }
+      if (Array.isArray(obj.data.ads)) {
+        obj.data.ads.forEach(kill);
+        obj.data.ads = [];
       }
     }
   }
 
-  $done({ body: JSON.stringify(obj) });
+    $done({ body: JSON.stringify(obj) });
+  } catch (e) {
+    $done({});
+  }
 })();
