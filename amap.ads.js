@@ -31,7 +31,6 @@ const EMPTY_OUT = [
   "/ws/mapapi/hint_text/offline_data",
   "/ws/message/notice/list",
   "/ws/shield/search/new_hotword",
-  "/ws/shield/scene/recommend",
   "/ws/valueadded/weather/v2",
   "/ws/msgbox/pull_mp",
   "/ws/boss/order/car/king_toolbox_car_bubble",
@@ -44,6 +43,82 @@ const EMPTY_OUT = [
   const url = $request.url;
   const raw = $response.body;
 
+  // ---- AI 推荐流（SSE，非 JSON）：首页按行手术 ----
+  if (url.indexOf("ai.amap.com") !== -1 && url.indexOf("/ai_rec/") !== -1) {
+    if (!raw) {
+      return $done({});
+    }
+    // 探索页 AI 流：整条置空
+    if (url.indexOf("/ai_rec/home_explore") !== -1) {
+      return $done({ body: 'event: data\ndata: {"exist_risk":false,"is_done":true}\n\n' });
+    }
+    // 首页 AI 流：从「帮我叫一辆空气清新的车」那一行起（含它本身）往下全部丢掉
+    const lines = raw.split("\n");
+    const out = [];
+    let cut = false;
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (line.indexOf("data:") !== 0) {
+        if (!cut) {
+          out.push(line);
+        }
+        continue;
+      }
+      let j;
+      try {
+        j = JSON.parse(line.slice(5));
+      } catch (e) {
+        if (!cut) {
+          out.push(line);
+        }
+        continue;
+      }
+      const comp = j.component || {};
+      const inner = comp.data && comp.data.data;
+      // AI 思考过程行：整行丢弃
+      if (comp.type === "loading" || comp.think_type || (inner && inner.sub_type === "think")) {
+        continue;
+      }
+      const isTaxi =
+        line.indexOf("空气清新的车") !== -1 ||
+        line.indexOf("叫一辆") !== -1 ||
+        line.indexOf('"PmtContainer"') !== -1;
+      if (isTaxi) {
+        cut = true;
+        // 叫车卡与「常去地点」可能挤在同一行：做模块级清理，只留常去地点那一个模块
+        const mods = inner && inner.modules;
+        if (mods) {
+          let keepFrequent = false;
+          for (const k of Object.keys(mods)) {
+            let t = "";
+            try {
+              t = JSON.stringify(mods[k] || {});
+            } catch (e) {
+              t = "";
+            }
+            if (t.indexOf("常去地点") !== -1) {
+              keepFrequent = true;
+            } else {
+              delete mods[k];
+            }
+          }
+          if (keepFrequent) {
+            out.push("data:" + JSON.stringify(j));
+          }
+        }
+        continue; // 叫车卡本身及它下面的全部丢弃
+      }
+      if (cut) {
+        continue;
+      }
+      out.push(line);
+    }
+    if (cut) {
+      out.push('data: {"exist_risk":false,"is_done":true}', "");
+    }
+    return $done({ body: out.join("\n") });
+  }
+
   // 无 body / 非 JSON（HTML、图片、纯文本）一律原样放行
   if (!raw || !/^\s*[\{\[]/.test(raw)) {
     return $done({});
@@ -54,6 +129,12 @@ const EMPTY_OUT = [
     obj = JSON.parse(raw);
   } catch (e) {
     return $done({});
+  }
+
+  // 整包都是广告/推广资源的接口，直接返回空对象（等价 Loon 的 reject-dict）
+  // 必须放在最前面：否则会被下面更宽的 includes 分支抢先命中而漏掉置空
+  if (EMPTY_OUT.some((p) => url.includes(p))) {
+    return $done({ body: "{}" });
   }
 
   if (url.includes("/aos/perception/publicTravel/beforeNavi")) {
@@ -139,19 +220,49 @@ const EMPTY_OUT = [
       obj.data.children = obj.data.children.filter((i) => !i.hasOwnProperty("schema"));
     }
   } else if (url.includes("/faas/amap-navigation/main-page")) {
-    // 首页底部卡片
+    // 首页：从「帮我叫一辆空气清新的车」那张卡开始（含它本身）往下全部去掉
     if (obj?.data?.cardList?.length > 0) {
-      obj.data.cardList = obj.data.cardList.filter(
-        (i) =>
-          i?.dataKey === "ContinueNavigationCard" || // 继续导航
-          i?.dataKey === "FrequentLocation" || // 常去地点
-          i?.dataKey === "LoginCard" // 登陆卡片
-      );
+      const kept = [];
+      let hit = false;
+      for (const card of obj.data.cardList) {
+        let text = "";
+        try {
+          text = JSON.stringify(card);
+        } catch (e) {
+          text = "";
+        }
+        if (
+          text.indexOf("空气清新的车") !== -1 ||
+          text.indexOf("叫一辆") !== -1 ||
+          text.indexOf("臭车") !== -1
+        ) {
+          hit = true;
+          break; // 命中叫车推广卡，它和它下面的都不要
+        }
+        kept.push(card);
+      }
+      if (hit) {
+        obj.data.cardList = kept;
+      } else {
+        // 没命中（文案改了/接口结构变了）：退回白名单，至少保证营销卡不出现
+        obj.data.cardList = obj.data.cardList.filter(
+          (i) =>
+            i?.dataKey === "ContinueNavigationCard" || // 继续导航
+            i?.dataKey === "FrequentLocation" || // 常去地点
+            i?.dataKey === "LoginCard" // 登陆卡片
+        );
+      }
     }
     if (obj?.data?.mapBizList?.length > 0) {
       obj.data.mapBizList = obj.data.mapBizList.filter(
         (i) => i?.dataKey === "FindCarVirtualCard" // 显示关联车辆位置
       );
+    }
+  } else if (url.includes("/info_bff/contentFeed") || url.includes("/info_bff/ContentCenter")) {
+    // 首页/内容中心推荐瀑布流（赏红叶榜、KTV热门榜、酒吧热门榜、游记攻略等）
+    const wf = obj?.data?.modules?.waterfall;
+    if (wf?.data && Array.isArray(wf.data.list)) {
+      wf.data.list = [];
     }
   } else if (url.includes("/perception/drive/routeInfo")) {
     // 导航详情页
@@ -218,9 +329,35 @@ const EMPTY_OUT = [
       delete obj.data.carTips.data.popupInfo;
     }
   } else if (url.includes("/shield/dsp/profile/index/nodefaasv3")) {
-    // 我的页面
+    // 我的页面：从「达人任务」那张卡开始（含它本身）往下全部去掉
     if (obj?.data?.cardList?.length > 0) {
-      obj.data.cardList = obj.data.cardList.filter((i) => i?.dataKey === "MyOrderCard");
+      const kept = [];
+      let hit = false;
+      for (const card of obj.data.cardList) {
+        let text = "";
+        try {
+          text = JSON.stringify(card);
+        } catch (e) {
+          text = "";
+        }
+        if (text.indexOf("达人任务") !== -1) {
+          hit = true;
+          break; // 命中「达人任务」，它和它下面的都不要
+        }
+        kept.push(card);
+      }
+      // 兜底：万一没命中关键词，退回白名单，至少保证营销卡不出现
+      if (!hit) {
+        obj.data.cardList = obj.data.cardList.filter(
+          (i) =>
+            i?.dataKey === "MyOrderCard" ||
+            i?.dataKey === "MineNewBEntranceCardV4" ||
+            i?.dataKey === "MineNewVirtualAssetCardV3" ||
+            i?.dataKey === "MineNewFootprintCard"
+        );
+      } else {
+        obj.data.cardList = kept;
+      }
     }
     if (obj?.data?.tipData) {
       delete obj.data.tipData;
@@ -674,9 +811,6 @@ const EMPTY_OUT = [
         item.creative[0].end_time = 3818419199; // Unix 时间戳 2090-12-31 23:59:59
       }
     }
-  } else if (EMPTY_OUT.some((p) => url.includes(p))) {
-    // 这些接口整包都是广告/推广资源，直接返回空对象（等价 Loon 的 reject-dict）
-    obj = {};
   }
 
   $done({ body: JSON.stringify(obj) });
