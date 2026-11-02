@@ -219,6 +219,34 @@ const EMPTY_OUT = [
       // 有schema参数的为推广
       obj.data.children = obj.data.children.filter((i) => !i.hasOwnProperty("schema"));
     }
+  } else if (url.includes("/faas/amap-navigation/main-page-aiqs")) {
+    // 首页地图图层：只删酒店与营销类图标，其余保留
+    if (obj?.data?.mapBizList?.length > 0) {
+      const DROP_ICONS = {
+        SddTileOffsiteHotel: 1,
+        OffsiteHotel: 1, // 酒店
+        "淄博烧烤POI": 1,
+        sdd_tile_HotSpring_SKU: 1,
+        StarbucksStreetSend: 1,
+        CategoryYoungRecommend: 1,
+        MerchantGuidance: 1,
+        RandomPoints: 1,
+        Personalise: 1,
+        Onsite: 1,
+        Offsite: 1,
+        Hqyc: 1,
+        UGCHotEventCard: 1,
+        UGCGovCard: 1,
+        RenderCPTHouse: 1,
+        Kids: 1,
+        Winter: 1,
+        SpringV2: 1,
+        Covid: 1,
+        CovidMerge: 1,
+        Epidemic: 1
+      };
+      obj.data.mapBizList = obj.data.mapBizList.filter((i) => !DROP_ICONS[i?.dataKey]);
+    }
   } else if (url.includes("/faas/amap-navigation/main-page")) {
     // 首页：从「帮我叫一辆空气清新的车」那张卡开始（含它本身）往下全部去掉
     if (obj?.data?.cardList?.length > 0) {
