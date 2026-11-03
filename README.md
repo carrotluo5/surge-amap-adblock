@@ -46,9 +46,9 @@ Surge 的 URL Rewrite **只有 header / 302 / 307 / reject 四种**，没有 Loo
 
 > ⚠️ 首页顶部工具栏（公交地铁、骑行、打车…）在叫车卡**上方**，属保留区。所以 `/ws/shield/scene/recommend` **没有**放进整包置空名单——放进去会把工具栏一起清掉。
 
-## 两个线上 bug 的根因与修法
+## 三个线上 bug 的根因与修法
 
-这两个 bug 都是「本地 mock 测不出来、只有真机才暴露」的类型，记录在这里免得再踩。
+这三个 bug 都是「本地 mock 测不出来、只有真机才暴露」的类型，记录在这里免得再踩。
 
 ### 一、首页「网络不畅，请稍后重试」
 
@@ -112,6 +112,61 @@ item.creative[0].end_time = 3818419199;
 
 > 这条经验通用：**在 Surge 脚本里，任何未捕获的异常都等于「模块失效」**。宁可少删一点，也不能让脚本抛错。
 
+### 三、卡片与「关注/推荐/附近」tab 行重新出现
+
+**现象**：上一版修好后，首页又冒出天气卡、打车优惠券、扫街榜（下午茶热门榜 / 赏红叶榜 / 茶室热门榜 / 集市热门榜）、「问问 AI，发掘更多好去处」卡，以及一条「关注 推荐 附近 美食 周末出游 休闲娱乐」tab 行和三张美食达人卡。
+
+**根因**：`/ws/info_bff/ContentCenter` 的响应体里有**两套**结构：
+
+- `data.modules` —— 模块内容（真正要删的东西）
+- `data.regions` —— **渲染清单**，告诉 App「这个页面有哪些区域、按什么顺序排」
+
+上一版只删了 `modules` 里的键，`regions` 原样留着：
+
+```json
+"regions": {
+  "waterfall": ["waterfall"],
+  "header": ["header"],
+  "waterfallTitle": ["waterfallTitle"],
+  "list": ["list"],
+  "content": ["recommendUser"]
+}
+```
+
+App 按 `regions` 继续渲染，本地缓存一兜底，卡片就全回来了。
+
+那条 tab 行本身也是这个接口出的 —— 同一个接口按 `data.meta.requestParams.tab_params.tab_id` 分页拉：
+
+| tab_id | 对应 tab |
+| --- | --- |
+| `explore_page_tab_rec_focusOn` | 关注 |
+| `explore_page_tab_rec_city` | 推荐（带 adcode，如深圳 440300）|
+| `explore_page_tab_rec_nearBy` | 附近 |
+
+**修法**：`modules` 和 `regions` **一起**清空：
+
+```js
+if (obj && obj.data && typeof obj.data === "object") {
+  obj.data.modules = {};
+  obj.data.regions = {};
+}
+```
+
+> 这是「删数据 ≠ 删界面」的典型：App 的渲染清单和内容是两套字段。只清内容，清单还在，App 就会拿缓存把坑填满。
+
+## 怎么抓响应体（Surge 6 MCP）
+
+Surge 6 的 MCP **没有**通用的「按请求 id 取响应体」通道 —— `get_captured_body` 对任何 id 都返回字符串 `"Data does not exist"`，哪怕 `list_requests` 里明明标着 `streamHasResponseBody: true`。
+
+真正能用的是 **`get_logbook`**：
+
+- 每条 `type: "script"` 的记录带 `metadata.scriptPayload`，其中 `$request` 含 `{id, method, url, headers}`，`$response` 含 `{status, headers, body}`，`metadata.result.body` 是脚本 `$done()` 的输出
+- `$response.body` 在 body 较大时是布尔 `true`（表示省略），小 body 才给字符串
+- start / completed 两条记录用 `metadata.sessionID` 配对
+- **`limit` 超过约 40 会截断成非法 JSON**（`Unterminated string starting at: line 1 column 255181`），用 `limit: 30~40` 且 `json.loads(..., strict=False)`
+
+另一个判据：`list_requests` 里每条请求的 `remark` 字段。脚本真的跑过了会写成 `Modified by script <脚本名>`，这是**唯一**能确认「模块有没有生效」的信号。
+
 ## 关键实现点
 
 - 脚本用 IIFE 包裹，保证 `$done()` **只被调用一次**（先 `$done` 再继续执行会触发多次回调）
@@ -127,13 +182,14 @@ item.creative[0].end_time = 3818419199;
 - **真机 Surge JS 引擎**用 `evaluate_script` 注入 mock 的 `$request`/`$response` 复核关键场景，输出与本地一致
 - 正则：在真机引擎里 `new RegExp(pat).test(url)`，45 条目标 URL 全 HIT，7 条负例（`restapi.amap.com`、`www.amap.com`、`amap.com.evil.com`、`m5.amap.com/wsx/...` 等）全 MISS
 - 模块：`list_scripts` 确认 5 条脚本已注册且 enabled
+- ContentCenter 双清空：mock 一个带 `modules` + `regions` 的响应，脚本输出两者都为空对象
 
 ## 已知限制
 
 - 只覆盖已验证存在的接口。高德换接口后需要补路径
 - 若某条响应体超过 `max-size=1048576`（1MB）会被跳过——这是为了避免 iOS Network Extension 内存超限
 - 与其它高德模块同时启用可能冲突（Surge 每个响应只跑第一条匹配的脚本）
-- 首页偶发的「网络不畅」若仍出现，说明占位来自本文档未覆盖的接口，需要抓包补路径（Surge 6 的 MCP 没有响应体回读通道，`get_captured_body` 恒返回 `Data does not exist`）
+- 首页偶发的「网络不畅」若仍出现，说明占位来自本文档未覆盖的接口，需要抓包补路径（抓包方法见上节）
 - 底部 tab（首页/探索/长按说话/打车/我的）与搜索页分类行（美食/酒店/景点门票…）在任何响应体里都没有，属原生渲染，脚本改不了
 
 ## 出处
