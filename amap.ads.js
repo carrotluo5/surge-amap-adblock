@@ -37,6 +37,18 @@ const EMPTY_OUT = [
   "/ws/boss/tips/onscene_visual_optimization",
 ];
 
+// ===== TEMP DEBUG v4 =====
+try {
+  $persistentStore.write("v4-1846", "cdbg_ver");
+  var __u4 = $request.url || "";
+  if (__u4.indexOf("/info_bff/ContentCenter") !== -1 && $response && typeof $response.body === "string") {
+    $persistentStore.write(__u4, "cdbg_u");
+    $persistentStore.write($response.body.slice(0, 120000), "cdbg_b");
+    $persistentStore.write(String($response.body.length), "cdbg_len");
+  }
+} catch (e) { $persistentStore.write("ERR " + e, "cdbg_ver"); }
+// ===== END TEMP DEBUG v4 =====
+
 // 2024-09-03 21:40
 
 (function () {
