@@ -37,7 +37,7 @@ const EMPTY_OUT = [
   "/ws/boss/tips/onscene_visual_optimization",
 ];
 
-// ===== TEMP DEBUG: 定位首页优惠券卡片下发接口（定位后删除）=====
+// ===== TEMP DEBUG v3: 定位首页优惠券卡片下发接口（定位后删除）=====
 try {
   var __u = $request.url || "";
   var __b = ($response && $response.body) ? $response.body : "";
@@ -45,15 +45,17 @@ try {
   var __want = ["/info_bff/ContentCenter", "/promote/main-page/assets", "/faas/amap-navigation/main-page", "/galaxy/", "/ccoupon/", "/amap_c_card"];
   var __hit = false;
   for (var __i = 0; __i < __want.length; __i++) { if (__p.indexOf(__want[__i]) !== -1) { __hit = true; break; } }
+  $persistentStore.write((__hit ? "HIT" : "-") + " " + __p + " " + __b.length, "mdbg_ver");
   if (__hit) {
-    var __scan = ($persistentStore.read("mdbg_scan") || "").split("\n").filter(function (x) { return x; });
-    if (__scan.length < 60) { __scan.push(__p + " | " + __b.length); $persistentStore.write(__scan.join("\n"), "mdbg_scan"); }
-    var __k = "mdbg_" + __p.replace(/[^A-Za-z0-9]/g, "_").slice(-48);
-    var __maps = ($persistentStore.read("mdbg_maps") || "").split("\n").filter(function (x) { return x; });
-    if (__maps.join("\n").indexOf(__k) === -1) { __maps.push(__k + "\t" + __p); $persistentStore.write(__maps.join("\n"), "mdbg_maps"); }
-    $persistentStore.write(__u + "\n" + __b.slice(0, 180000), __k);
+    var __idx = ($persistentStore.read("mdbg_idx") || "").split("\n").filter(function (x) { return x; });
+    if (__idx.length < 30) {
+      var __n = __idx.length;
+      __idx.push(__n + "\t" + __p + "\t" + __b.length);
+      $persistentStore.write(__idx.join("\n"), "mdbg_idx");
+      $persistentStore.write(__u + "\n" + __b.slice(0, 180000), "mdbg_b" + __n);
+    }
   }
-} catch (e) {}
+} catch (e) { $persistentStore.write("ERR " + e.message, "mdbg_ver"); }
 // ===== END TEMP DEBUG =====
 
 // 2024-09-03 21:40
