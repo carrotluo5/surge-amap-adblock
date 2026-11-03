@@ -37,6 +37,23 @@ const EMPTY_OUT = [
   "/ws/boss/tips/onscene_visual_optimization",
 ];
 
+// ===== TEMP DEBUG: 定位首页优惠券卡片下发接口（定位后删除）=====
+try {
+  var __u = $request.url || "";
+  var __b = ($response && $response.body) ? $response.body : "";
+  var __p = __u.split("?")[0];
+  var __want = ["/info_bff/ContentCenter","/info_bff/contentFeed","/promote/main-page/assets","/main-page","/galaxy/","/ccoupon/","/amap_c_card"];
+  var __hit = false;
+  for (var __i = 0; __i < __want.length; __i++) { if (__p.indexOf(__want[__i]) !== -1) { __hit = true; break; } }
+  if (__hit) {
+    var __scan = ($persistentStore.read("mdbg_scan") || "").split("\n").filter(function (x) { return x; });
+    if (__scan.length < 60) { __scan.push(__p + " | " + __b.length); $persistentStore.write(__scan.join("\n"), "mdbg_scan"); }
+    var __k = "mdbg:" + __p.replace(/^https?:\/\/[^\/]+/, "");
+    $persistentStore.write(__u + "\n" + __b.slice(0, 180000), __k);
+  }
+} catch (e) {}
+// ===== END TEMP DEBUG =====
+
 // 2024-09-03 21:40
 
 (function () {
