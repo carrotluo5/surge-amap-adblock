@@ -37,27 +37,6 @@ const EMPTY_OUT = [
   "/ws/boss/tips/onscene_visual_optimization",
 ];
 
-// ===== TEMP DEBUG v3: 定位首页优惠券卡片下发接口（定位后删除）=====
-try {
-  var __u = $request.url || "";
-  var __b = ($response && $response.body) ? $response.body : "";
-  var __p = __u.split("?")[0];
-  var __want = ["/info_bff/ContentCenter", "/promote/main-page/assets", "/faas/amap-navigation/main-page", "/galaxy/", "/ccoupon/", "/amap_c_card"];
-  var __hit = false;
-  for (var __i = 0; __i < __want.length; __i++) { if (__p.indexOf(__want[__i]) !== -1) { __hit = true; break; } }
-  $persistentStore.write((__hit ? "HIT" : "-") + " " + __p + " " + __b.length, "mdbg_ver");
-  if (__hit) {
-    var __idx = ($persistentStore.read("mdbg_idx") || "").split("\n").filter(function (x) { return x; });
-    if (__idx.length < 30) {
-      var __n = __idx.length;
-      __idx.push(__n + "\t" + __p + "\t" + __b.length);
-      $persistentStore.write(__idx.join("\n"), "mdbg_idx");
-      $persistentStore.write(__u + "\n" + __b.slice(0, 180000), "mdbg_b" + __n);
-    }
-  }
-} catch (e) { $persistentStore.write("ERR " + e.message, "mdbg_ver"); }
-// ===== END TEMP DEBUG =====
-
 // 2024-09-03 21:40
 
 (function () {
