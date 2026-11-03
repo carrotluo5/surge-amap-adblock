@@ -42,13 +42,15 @@ try {
   var __u = $request.url || "";
   var __b = ($response && $response.body) ? $response.body : "";
   var __p = __u.split("?")[0];
-  var __want = ["/info_bff/ContentCenter","/info_bff/contentFeed","/promote/main-page/assets","/main-page","/galaxy/","/ccoupon/","/amap_c_card"];
+  var __want = ["/info_bff/ContentCenter", "/promote/main-page/assets", "/faas/amap-navigation/main-page", "/galaxy/", "/ccoupon/", "/amap_c_card"];
   var __hit = false;
   for (var __i = 0; __i < __want.length; __i++) { if (__p.indexOf(__want[__i]) !== -1) { __hit = true; break; } }
   if (__hit) {
     var __scan = ($persistentStore.read("mdbg_scan") || "").split("\n").filter(function (x) { return x; });
     if (__scan.length < 60) { __scan.push(__p + " | " + __b.length); $persistentStore.write(__scan.join("\n"), "mdbg_scan"); }
-    var __k = "mdbg:" + __p.replace(/^https?:\/\/[^\/]+/, "");
+    var __k = "mdbg_" + __p.replace(/[^A-Za-z0-9]/g, "_").slice(-48);
+    var __maps = ($persistentStore.read("mdbg_maps") || "").split("\n").filter(function (x) { return x; });
+    if (__maps.join("\n").indexOf(__k) === -1) { __maps.push(__k + "\t" + __p); $persistentStore.write(__maps.join("\n"), "mdbg_maps"); }
     $persistentStore.write(__u + "\n" + __b.slice(0, 180000), __k);
   }
 } catch (e) {}
