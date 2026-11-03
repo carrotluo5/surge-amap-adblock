@@ -309,31 +309,17 @@ const EMPTY_OUT = [
       );
     }
   } else if (url.includes("/info_bff/contentFeed") || url.includes("/info_bff/ContentCenter")) {
-    // 首页/内容中心推荐瀑布流（赏红叶榜、KTV热门榜、酒吧热门榜、游记攻略等）
+    // 首页内容流：天气卡、打车优惠券、扫街榜瀑布、问问 AI、关注/推荐/附近 tab 与达人卡
     //
-    // 注意：这里以前是把 modules.waterfall.data.list 置空数组，结果高德在首页
-    // 「探索本地」下方那格瀑布流里显示「网络不畅，请稍后重试」——因为它把「有模块但
-    // 数据为空」当成加载失败。所以改成把整个模块删掉，App 就认为压根没有这个区域。
-    const nuke = (host, keys) => {
-      if (!host || typeof host !== "object") return;
-      for (const k of keys) {
-        if (Object.prototype.hasOwnProperty.call(host, k)) {
-          delete host[k];
-        }
-      }
-    };
-    nuke(obj?.data?.modules, ["waterfall", "feed", "contentFeed", "waterfallList"]);
-    nuke(obj?.data, ["waterfall", "feed", "contentFeed", "waterfallList"]);
-    // 兜底：任何「有容器但 list 为空」的模块都删掉，否则 App 会把空列表
-    // 当成加载失败，渲染成「网络不畅，请稍后重试」占位。
-    const mods = obj?.data?.modules;
-    if (mods && typeof mods === "object") {
-      for (const k of Object.keys(mods)) {
-        const d = mods[k] && mods[k].data;
-        if (d && Array.isArray(d.list) && d.list.length === 0) {
-          delete mods[k];
-        }
-      }
+    // 两个坑，都踩过：
+    // 1) 只把 modules.xxx.data.list 置空 —— App 会把「有模块容器但数据为空」判成
+    //    加载失败，在首页渲染「网络不畅，请稍后重试」。
+    // 2) 只删 modules 里的键 —— App 的渲染清单是 data.regions，regions 里还留着
+    //    waterfall / recommendUser，App 就会拿本地缓存的模块继续渲染，
+    //    于是卡片「重新出现」。所以 regions 必须一起清空。
+    if (obj && obj.data && typeof obj.data === "object") {
+      obj.data.modules = {};
+      obj.data.regions = {};
     }
   } else if (url.includes("/perception/drive/routeInfo")) {
     // 导航详情页
